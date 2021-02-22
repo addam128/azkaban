@@ -1,0 +1,18 @@
+[package]
+name = "azkaban"
+version = "0.1.0"
+authors = ["Adam Ruman <ruman.adam@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ring = "0.16.20"
+console = "0.14.0"
+dialoguer = "0.7.1"
+indicatif = "0.15.0"
+blake3 = "0.3.7"
+libc = "0.2.86"
+rusqlite = "0.24.2"
+protobuf = "2.22.0"
+rand = "0.8.3"
