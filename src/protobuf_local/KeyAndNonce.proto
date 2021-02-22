@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+message KeyAndNonce {
+    bytes data_key = 1;
+    bytes data_nonce = 2;
+    bytes nonce_for_key = 3;
+    bytes nonce_for_nonce = 4;
+}
