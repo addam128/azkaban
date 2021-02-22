@@ -9,8 +9,15 @@ mod dbmanagers;
 mod config;
 mod cli;
 mod nonceimpl;
+mod protobuf_local;
+mod auth;
 
+use tokio;
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() {
+    let mut conf = config::Config::new();
+    conf.set_db_loc("/home/adam/Desktop/").unwrap();
+    let auth_db = dbmanagers::AuthDBManager::new(&conf);
+    auth_db.init().await.unwrap();
 }

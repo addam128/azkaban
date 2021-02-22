@@ -12,7 +12,7 @@ console = "0.14.0"
 dialoguer = "0.7.1"
 indicatif = "0.15.0"
 blake3 = "0.3.7"
-rusqlite = "0.24.2"
+sqlx = { version = "0.5.1", features = ["runtime-tokio-rustls", "sqlite"] }
 protobuf = "2.22.0"
 rand = "0.8.3"
 sodiumoxide = "0.2.6"
