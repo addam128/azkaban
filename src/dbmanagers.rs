@@ -230,19 +230,11 @@ impl UniqenessDBManager {
                 .bind(value))
                 .await?;
 
-        if res.rows_affected() != 1 {let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
-        .connect().await?;
-    
-    let res = conn.execute(sqlx::query(
-            &format!("INSERT INTO {} (value) VALUES ?", utable!(user, kind)))
-            .bind(value))
-            .await?;
-
-    if res.rows_affected() != 1 {
-        return Err(utils::Error::ChangedRowCountMismatch);
-    }
+        if res.rows_affected() != 1 {
+   
             return Err(utils::Error::ChangedRowCountMismatch);
         }
+        
         Ok(())
     }
 }
@@ -365,6 +357,4 @@ impl AssociationDBManager {
 
         Ok(rows.into_iter().map(|row| (row.get(0), row.get(1))).collect())
     }
-
-
 }
