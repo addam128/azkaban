@@ -1,12 +1,29 @@
 use rand::distributions::uniform;
-use sqlx::{Connection, sqlite::{self, SqliteConnectOptions, SqliteArguments}, ConnectOptions, query::Query, Executor, Row};
+use sqlx::{ConnectOptions, Connection, Executor, Row, query::{self, Query}, sqlite::{self, SqliteConnectOptions, SqliteArguments, SqliteQueryResult}};
 
-use std::path::PathBuf;
+use std::{fs::File, path::PathBuf};
 use std::str::FromStr;
 
 use crate::config::Config;
 use crate::utils;
 use crate::auth::AuthToken;
+
+
+macro_rules! utable {
+    ($user: expr, $kind: expr) => {
+      format!("{}_{}", $user, $kind.to_string())  
+    }
+}
+
+macro_rules! atable {
+    ($user: expr) => {
+        format!("{}_assoc", $user)
+    }
+}
+
+pub(crate) struct FileAssoc(Vec<u8>, Vec<u8>, Vec<u8>);
+
+
 pub(crate) enum UniqueType {
     Nonce,
     Filename
@@ -28,6 +45,7 @@ pub(crate) struct AuthDBManager {
 impl AuthDBManager {
 
     pub(crate) fn new(config: &Config) -> Self {
+        
         let mut pbf = PathBuf::new();
         pbf.push(config.get_db_loc());
         pbf.push("auth.sqlite");
@@ -43,7 +61,6 @@ impl AuthDBManager {
         } else {
             Err(utils::Error::ConversionError)
         }
-
     }
 
     pub(crate) async fn init(&self) -> Result<(), utils::Error> {
@@ -75,12 +92,16 @@ impl AuthDBManager {
 
         let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
                     .connect().await?;
-        let rows_changed = conn.execute(sqlx::query(
+        let res = conn.execute(sqlx::query(
                 "INSERT INTO auth (user, nonce, token) VALUES (?, ?, ?)")
                 .bind(user)
                 .bind(nonce)
                 .bind(auth_str))
                 .await?;
+
+        if res.rows_affected() != 1 {
+            return Err(utils::Error::ChangedRowCountMismatch);
+        }
         
         Ok(())
     }
@@ -112,11 +133,66 @@ impl AuthDBManager {
     }
 }
 
-pub(crate) struct UniqenessDBManager {
 
+
+pub(crate) struct UniqenessDBManager {
+    _path_buf: PathBuf
 }
 
 impl UniqenessDBManager {
+
+    pub(crate) fn new(config: &Config) -> Self {
+        
+        let mut pbf = PathBuf::new();
+        pbf.push(config.get_db_loc());
+        pbf.push("uniq.sqlite");
+
+        Self {
+            _path_buf: pbf
+        }
+    }
+
+    fn get_path(&self) -> Result<&str, utils::Error> {
+        if let Some(p) = self._path_buf.as_path().to_str() {
+            Ok(p)
+        } else {
+            Err(utils::Error::ConversionError)
+        }
+    }
+
+    pub(crate) async fn init_full(&self, user: &str)
+        -> Result<(), utils::Error> {
+        
+        self.init(user, UniqueType::Nonce).await?;
+        self.init(user, UniqueType::Filename).await?;
+        
+        Ok(())
+    }  
+
+    pub(crate) async fn init(
+        &self,
+        user: &str,
+        kind: UniqueType)
+        -> Result<(), utils::Error> {
+
+        let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+                        .create_if_missing(true)
+                        .connect().await?;
+        
+        let res = 
+            sqlx::query(&format!("SELECT name FROM sqlite_master WHERE type='table' AND name = '{}'", utable!(user, kind)))
+            .fetch_optional(&mut conn).await?;
+
+        if let None = res {
+            sqlx::query(
+                &format!("CREATE TABLE {} (
+                            value BLOB PRIMARY KEY
+                            )", utable!(user, kind)))
+                .execute(&mut conn).await?;
+        }
+
+        Ok(())
+    }
 
     pub(crate) async fn exists(
         &self,
@@ -124,11 +200,171 @@ impl UniqenessDBManager {
         value: &[u8],
         kind: UniqueType)
         -> Result<bool, utils::Error> {
+
+        let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .connect().await?;
+        let row = sqlx::query(
+        &format!("SELECT {} FROM auth WHERE value = ?", utable!(user, kind)))
+        .bind(value)
+        .fetch_optional(&mut conn)
+        .await?;
         
-            Ok(false)
-    } 
+        match row {
+            None => {Ok(false)}
+            Some(_) => {Ok(true)}
+        }
+    }
+    
+    pub(crate) async fn save(
+        &self,
+        user: &str,
+        value: &[u8],
+        kind: UniqueType)
+        -> Result<(), utils::Error> {
+
+        let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .connect().await?;
+        
+        let res = conn.execute(sqlx::query(
+                &format!("INSERT INTO {} (value) VALUES ?", utable!(user, kind)))
+                .bind(value))
+                .await?;
+
+        if res.rows_affected() != 1 {let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+        .connect().await?;
+    
+    let res = conn.execute(sqlx::query(
+            &format!("INSERT INTO {} (value) VALUES ?", utable!(user, kind)))
+            .bind(value))
+            .await?;
+
+    if res.rows_affected() != 1 {
+        return Err(utils::Error::ChangedRowCountMismatch);
+    }
+            return Err(utils::Error::ChangedRowCountMismatch);
+        }
+        Ok(())
+    }
 }
 
+
+
 pub(crate) struct AssociationDBManager {
+    _path_buf: PathBuf
+}
+
+impl AssociationDBManager {
+
+    pub(crate) fn new(config: &Config) -> Self {
+
+        let mut pbf = PathBuf::new();
+        pbf.push(config.get_db_loc());
+        pbf.push("assoc.sqlite");
+
+        Self {
+            _path_buf: pbf
+        }
+    }
+
+    fn get_path(&self) -> Result<&str, utils::Error> {
+        if let Some(p) = self._path_buf.as_path().to_str() {
+            Ok(p)
+        } else {
+            Err(utils::Error::ConversionError)
+        }
+    }
+
+    pub(crate) async fn init(
+        &self,
+        user: &str)
+        -> Result<(), utils::Error> {
+        
+        let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .connect()
+            .await?;
+        
+
+        let res = sqlx::query(
+        &format!("SELECT name FROM sqlite_master WHERE type='table' AND name = '{}'", atable!(user)))
+            .fetch_optional(&mut conn)
+            .await?;
+
+        if let None = res {
+            sqlx::query(
+            &format!("CREATE TABLE {} (
+                id INTEGER PRIMARY KEY,
+                filename NOT NULL,
+                nonce BLOB NOT NULL,
+                enc_name BLOB NOT NULL
+                )", atable!(user)))
+                .execute(&mut conn)
+                .await?;
+            }
+
+        Ok(())
+    }
+
+    pub(crate) async fn save(
+        &self,
+        user: &str,
+        filename: &[u8],
+        nonce: &[u8],
+        enc_name: &[u8])
+        -> Result<(), utils::Error> {
+
+        let mut conn  = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .connect().await?;
+    
+        let res = conn.execute(sqlx::query(
+            &format!("INSERT INTO {} (filename, nonce, enc_name) VALUES (?, ?, ?)", atable!(user)))
+            .bind(filename)
+            .bind(nonce)
+            .bind(enc_name))
+            .await?;
+
+        if res.rows_affected() != 1 {
+            return Err(utils::Error::ChangedRowCountMismatch);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn query(
+        &self,
+        user: &str,
+        id: i64)
+        -> Result<FileAssoc, utils::Error> {
+
+        let mut conn  = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .connect().await?;
+        
+        let res = sqlx::query(
+            &format!("SELECT filename, nonce, enc_name FROM {} WHERE id = ?", atable!(user)))
+                .bind(id)
+                .fetch_optional(&mut conn)
+                .await?;
+
+        if let Some(row) = res {
+            return Ok(FileAssoc(row.get(0), row.get(1), row.get(2)));
+        }
+        Err(utils::Error::NoSuchDataError)
+    }
+
+    pub(crate) async fn list_files(
+        &self,
+        user: &str)
+        -> Result<Vec<(i64, Vec<u8>)>, utils::Error> {
+        
+        let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .connect().await?;
+
+        let mut rows = sqlx::query(
+            &format!("SELECT id, filename FROM {}", atable!(user)))
+            .fetch_all(&mut conn)
+            .await?;
+
+        Ok(rows.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
+
 
 }

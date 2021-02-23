@@ -15,7 +15,8 @@ pub enum Error {
     SqliteError(sqlx::Error),
     ConversionError,
     AuthError,
-    ChangedRowCountMismatch
+    ChangedRowCountMismatch,
+    NoSuchDataError
 }
 
 impl From<std::io::Error> for Error {
