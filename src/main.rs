@@ -1,4 +1,5 @@
 #![feature(seek_stream_len)]
+#![feature(try_trait)]
 
 mod datacrypt;
 mod keycrypt;

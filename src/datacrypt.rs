@@ -1,11 +1,14 @@
-use ring::aead::{self, BoundKey, Aad};
+use ring::aead::{self, AES_256_GCM, Aad, BoundKey, UnboundKey};
 
 use crate::memguard;
 use crate::utils;
 use crate::nonceimpl::NonceSeqImpl;
+use crate::keycrypt::KEY_LEN;
 
 use tokio::fs::File;
 use tokio::io::{ AsyncWriteExt, AsyncReadExt, AsyncSeekExt};
+
+use std::{borrow::BorrowMut, sync::Arc};
 
 use std::io::SeekFrom;
 
@@ -15,16 +18,17 @@ const CHUNK_N_TAG_LEN: u64 = CHUNK_LEN + aead::MAX_TAG_LEN as u64;
 
 
 
-pub(crate) async fn encrypt_file<W: AsyncWriteExt + Unpin>(
-        infile: &mut File,
-        outstream: &mut W,
-        data_key: aead::UnboundKey, 
-        nonce: &[u8])
-        -> Result<(), utils::Error> {
+pub(crate) async fn encrypt_file(
+        mut infile: File,
+        mut outstream: File,
+        data_key: Arc<[u8; KEY_LEN]>, 
+        nonce: Arc<[u8; aead::NONCE_LEN]>)
+        -> Result<File, utils::Error> {
 
     
-    let nonces = NonceSeqImpl::new(nonce)?;
-    let mut s_key = aead::SealingKey::new(data_key, nonces);
+    let nonces = NonceSeqImpl::new(nonce.as_ref())?;
+    let u_key = UnboundKey::new(&AES_256_GCM, data_key.as_ref())?;
+    let mut s_key = aead::SealingKey::new(u_key, nonces);
 
     let mut buffer = [0u8; CHUNK_LEN as usize]; // no need to mlock, file exists in plain
     let file_len = infile.metadata().await?.len();
@@ -50,7 +54,7 @@ pub(crate) async fn encrypt_file<W: AsyncWriteExt + Unpin>(
     };
 
     infile.read_exact(&mut buffer[..remainder as usize]).await?;
-
+    const KEY_LEN: usize = 256 / 8;
     let tag = s_key.seal_in_place_separate_tag(
         Aad::from(counter.to_be_bytes()),
         &mut buffer[..remainder as usize])?;
@@ -58,20 +62,21 @@ pub(crate) async fn encrypt_file<W: AsyncWriteExt + Unpin>(
     outstream.write_all(&buffer[..remainder as usize]).await?;
     outstream.write_all(tag.as_ref()).await?;
 
-    Ok(())
+    Ok(infile)
 }
 
 
-pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin>(
-    infile: &mut File,
-    outstream: &mut W,
-    data_key: aead::UnboundKey, 
-    nonce: &[u8])
-    -> Result<(), utils::Error> {
+pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin + Send + Sync + 'static>(
+    mut infile: File,
+    mut outstream: W,
+    data_key: Arc<[u8; KEY_LEN]>, 
+    nonce: Arc<[u8; aead::NONCE_LEN]>)
+    -> Result<W, utils::Error> {
 
 
-    let nonces = NonceSeqImpl::new(nonce)?;
-    let mut o_key = aead::OpeningKey::new(data_key, nonces);
+    let nonces = NonceSeqImpl::new(nonce.as_ref())?;
+    let u_key = UnboundKey::new(&AES_256_GCM, data_key.as_ref())?;
+    let mut o_key = aead::OpeningKey::new(u_key, nonces);
 
     let mut buffer = [0u8; CHUNK_N_TAG_LEN as usize];
     let file_len = infile.metadata().await?.len();
@@ -107,5 +112,5 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin>(
 
     memguard::shred(&mut buffer);
 
-    Ok(())
+    Ok(outstream)
 }

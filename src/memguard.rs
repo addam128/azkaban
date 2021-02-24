@@ -11,6 +11,17 @@ pub(crate) fn mlock(mem: &mut [u8])
             .map_err(|_| utils::Error::MemoryLockError)    
 }
 
+pub(crate) fn mlock_opt(mem: Option<&mut [u8]>)
+    -> Result<(), utils::Error> {
+
+    match mem {
+        Some(underlying) => {
+            mlock(underlying)
+        }
+        None => { Err(utils::Error::SyncError) }
+    }
+}
+
 
 pub(crate) fn munlock(mem: &mut [u8])
     -> Result<(), utils::Error> {
@@ -27,6 +38,19 @@ pub(crate) fn shred(mem: &mut [u8])-> &[u8] {
     mem.iter_mut().for_each(|x| *x = rand::random());
     
     mem
+}
+
+pub(crate) fn shred_opt(mem: Option<&mut [u8]>) -> Result<(), utils::Error> {
+    
+    match mem {
+        Some(underlying) => {
+            shred(underlying);
+            Ok(())
+        }
+        None => {
+            Err(utils::Error::SyncError)
+        }
+    } 
 }
 
 
