@@ -54,10 +54,6 @@ impl From<std::option::NoneError> for Error {
 }
 
 
-
-
-
-
 pub(crate) async fn get_unique_nonce(
     user: &str,
     uniq_db: &UniqenessDBManager)

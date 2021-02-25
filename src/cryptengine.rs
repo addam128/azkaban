@@ -17,7 +17,7 @@ use crate::datacrypt;
 use crate::protobuf_local::KeyAndNonce::KeyAndNonce;
 
 
-fn derive_master_key(
+pub(crate) fn derive_master_key(
     passwd: &[u8])
     -> Result<Box<[u8; KEY_LEN]>, utils::Error> {
 

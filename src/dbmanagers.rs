@@ -204,7 +204,7 @@ impl UniqenessDBManager {
         let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
             .connect().await?;
         let row = sqlx::query(
-        &format!("SELECT {} FROM auth WHERE value = ?", utable!(user, kind)))
+        &format!("SELECT value FROM {} WHERE value = ?", utable!(user, kind)))
         .bind(value)
         .fetch_optional(&mut conn)
         .await?;
@@ -272,6 +272,7 @@ impl AssociationDBManager {
         -> Result<(), utils::Error> {
         
         let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
+            .create_if_missing(true)
             .connect()
             .await?;
         
