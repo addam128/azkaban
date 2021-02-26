@@ -119,7 +119,7 @@ async fn scramble_filename(
 }
 
 
-fn unscramble_filename<'a>(
+pub(crate) fn unscramble_filename<'a>(
     filename: &'a mut  [u8],
     nonce: &[u8],
     master_key: &aead::LessSafeKey)

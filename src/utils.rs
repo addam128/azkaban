@@ -25,7 +25,8 @@ pub enum Error {
     SyncError,
     ProtoBuferror(protobuf::error::ProtobufError),
     FutureJoinError(JoinError),
-    NoneError(std::option::NoneError)
+    NoneError(std::option::NoneError),
+    StringEncodingError(std::str::Utf8Error)
 }
 
 
@@ -52,6 +53,10 @@ impl From<tokio::task::JoinError> for Error {
 impl From<std::option::NoneError> for Error {
     fn from(err: std::option::NoneError) -> Self {Error::NoneError(err)}
 }
+
+impl From<std::str::Utf8Error> for Error {
+    fn from(err: std::str::Utf8Error) -> Self {Error::StringEncodingError(err)}
+} 
 
 
 pub(crate) async fn get_unique_nonce(

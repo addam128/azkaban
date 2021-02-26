@@ -346,16 +346,16 @@ impl AssociationDBManager {
     pub(crate) async fn list_files(
         &self,
         user: &str)
-        -> Result<Vec<(i64, Vec<u8>)>, utils::Error> {
+        -> Result<Vec<(i64, Vec<u8>, Vec<u8>)>, utils::Error> {
         
         let mut conn = SqliteConnectOptions::from_str(&format!("sqlite://{}", self.get_path()?))?
             .connect().await?;
 
         let mut rows = sqlx::query(
-            &format!("SELECT id, filename FROM {}", atable!(user)))
+            &format!("SELECT id, filename, nonce FROM {}", atable!(user)))
             .fetch_all(&mut conn)
             .await?;
 
-        Ok(rows.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+        Ok(rows.into_iter().map(|row| (row.get(0), row.get(1), row.get(2))).collect())
     }
 }
