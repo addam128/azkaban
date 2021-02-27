@@ -21,7 +21,7 @@ macro_rules! atable {
     }
 }
 
-pub(crate) struct FileAssoc(Vec<u8>, Vec<u8>, Vec<u8>);
+pub(crate) struct FileAssoc(pub Vec<u8>, pub Vec<u8>, pub Vec<u8>);
 
 
 pub(crate) enum UniqueType {

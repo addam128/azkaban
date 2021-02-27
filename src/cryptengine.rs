@@ -4,7 +4,9 @@ use ring::aead::{self, NONCE_LEN, Nonce, Aad};
 use ring::pbkdf2;
 use protobuf::{CodedInputStream, CodedOutputStream, Message};
 
-use std::{path::{Path, PathBuf}, str::FromStr};
+use indicatif::{MultiProgress, ProgressBar};
+
+use std::{ffi::OsStr, path::{Path, PathBuf}, str::FromStr};
 use std::sync::Arc;
 use std::num::NonZeroU32;
 
@@ -43,26 +45,37 @@ async fn save_keys(
     master_key: Arc<aead::LessSafeKey>,
     data_key: Arc<[u8; KEY_LEN]>,
     data_nonce: Arc<[u8; aead::NONCE_LEN]>,
-    uniq_db: Arc<UniqenessDBManager>)
+    uniq_db: Arc<UniqenessDBManager>,
+    pb: ProgressBar)
     -> Result<(), utils::Error> {
-
+    
+    let progress_bar = Arc::new(pb);
+    progress_bar.set_length(7);
+    let mut pb_arc = Arc::clone(&progress_bar);
+    
     let kn = keycrypt::save_keys(
         user.as_str(),
         data_key,
         data_nonce,
         master_key,
-        uniq_db).await?;
-
+        uniq_db,
+        pb_arc).await?;
+    
+    pb_arc = Arc::clone(&progress_bar);
     let save_to_file = tokio::task::spawn_blocking( move || -> Result<(), utils::Error> {
+
 
             let mut key_file = std::fs::OpenOptions::new()
                                                 .write(true)
                                                 .read(true)
                                                 .create_new(true)
                                                 .open(path.as_path())?;
+            pb_arc.inc(1);
             let mut keystream = CodedOutputStream::new(&mut key_file);
             kn.write_to_with_cached_sizes(&mut keystream)?;
-
+            keystream.flush()?;
+            pb_arc.inc(1);
+            pb_arc.finish();
             Ok(())
         }
     );
@@ -73,10 +86,15 @@ async fn save_keys(
 
 async fn load_keys(
     dek_path: PathBuf,
-    master_key: Arc<aead::LessSafeKey>)
+    master_key: Arc<aead::LessSafeKey>,
+    pb: ProgressBar)
     -> Result<(Arc<[u8; KEY_LEN]>, Arc<[u8; aead::NONCE_LEN]>),
     utils::Error> {
-
+    
+    
+    pb.set_length(6);
+    let pb_arc = Arc::new(pb);
+    let pb_arc2 = Arc::clone(&pb_arc);
     let load_from_file = tokio::task::spawn_blocking(move || -> Result<KeyAndNonce, utils::Error> {
 
         let mut key_file = std::fs::OpenOptions::new()
@@ -84,20 +102,21 @@ async fn load_keys(
                                                 .write(false)
                                                 .create(false)
                                                 .open(dek_path.as_path())?;
-
+        pb_arc.inc(1);
         let mut key_stream = CodedInputStream::new(&mut key_file);
         let mut kn = KeyAndNonce::new();
         kn.merge_from(&mut key_stream)?;
+        pb_arc.inc(1);
         Ok(kn)
     });
 
-    keycrypt::load_keys(master_key,  load_from_file.await??)
+    keycrypt::load_keys(master_key,  load_from_file.await??, pb_arc2)
 }
 
 
 async fn scramble_filename(
     user: &str,
-    filename: Option<&str>,
+    filename: Option<&OsStr>,
     master_key: &aead::LessSafeKey,
     uniq_db: &UniqenessDBManager)
     -> Result<(Vec<u8>, [u8; NONCE_LEN]), utils::Error> {
@@ -105,9 +124,13 @@ async fn scramble_filename(
     if let None = filename {
         return Err(utils::Error::ConversionError);
     }
+
+    if let None = filename.unwrap().to_str() {
+        return Err(utils::Error::ConversionError);
+    }
     
     let nonce = utils::get_unique_nonce(user, uniq_db).await?;
-    let mut scrambled = Vec::<u8>::from(filename.unwrap());
+    let mut scrambled = Vec::<u8>::from(filename.unwrap().to_str().unwrap());
 
     master_key.seal_in_place_append_tag(
         Nonce::try_assume_unique_for_key(&nonce)?,
@@ -142,7 +165,8 @@ pub(crate) async fn encrypt_file(
     master_key: Arc<aead::LessSafeKey>,
     assoc_db: Arc<AssociationDBManager>,
     uniq_db: Arc<UniqenessDBManager>,
-    config: Arc<Config>)
+    config: Arc<Config>,
+    pbs: (ProgressBar, ProgressBar))
     -> Result<(), utils::Error> {
 
     let mut in_file = OpenOptions::new()
@@ -156,10 +180,12 @@ pub(crate) async fn encrypt_file(
 
     let mut cipher_path = PathBuf::new();
     cipher_path.push(config.get_seal_loc());
+    cipher_path.push(user.as_str());
     cipher_path.push(format!("{}.enc", encryption_name));
 
     let mut key_path = PathBuf::new();
     key_path.push(config.get_dek_loc());
+    key_path.push(user.as_str());
     key_path.push(format!("{}.dek", encryption_name));
 
     let outfile = OpenOptions::new()
@@ -174,12 +200,16 @@ pub(crate) async fn encrypt_file(
     let mut key_arc = Arc::clone(&key);
     let mut nonce_arc = Arc::clone(&nonce);
 
+    let (pb_enc, pb_key) = pbs;
+
+    // TODO find a way to move progressbar increase into a separate blocking task
     let encrypt_job = tokio::task::spawn(async move {
             datacrypt::encrypt_file(
                 in_file,
                 outfile,
                 key_arc,
-                nonce_arc)
+                nonce_arc,
+                pb_enc)
                 .await
     });
     
@@ -196,14 +226,15 @@ pub(crate) async fn encrypt_file(
                       master_key_arc,
                       key_arc,
                       nonce_arc,
-                      uniq_arc).await
+                      uniq_arc,
+                      pb_key).await
         }
     );
     
     key_save.await??;
     let in_file = encrypt_job.await??;
     let (scrambled, s_nonce) = scramble_filename(user.as_str(),
-                        in_path.as_os_str().to_str(),
+                        in_path.as_path().file_name(),
                         master_key.as_ref(),
                         uniq_db.as_ref()).await?;
     assoc_db.save(user.as_str(),
@@ -231,7 +262,8 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Send + Sync + Unpin + 'stati
     enc_path: PathBuf,
     dek_path: PathBuf,
     out_writer: W,
-    master_key: Arc<aead::LessSafeKey>)
+    master_key: Arc<aead::LessSafeKey>,
+    pbs: (ProgressBar, ProgressBar))
     -> Result<(), utils::Error> {
     
     let enc_file = OpenOptions::new()
@@ -240,7 +272,9 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Send + Sync + Unpin + 'stati
                                     .create(false)
                                     .open(enc_path.as_path()).await?;
 
-    let (mut key, mut nonce) = load_keys(dek_path, master_key).await?;
+    let (dec_pbuf, key_pbuf) = pbs;
+
+    let (mut key, mut nonce) = load_keys(dek_path, master_key, key_pbuf).await?;
 
     let key_arc = Arc::clone(&key);
     let nonce_arc = Arc::clone(&nonce);
@@ -250,7 +284,8 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Send + Sync + Unpin + 'stati
             enc_file,
             out_writer,
             key_arc,
-            nonce_arc)
+            nonce_arc,
+            dec_pbuf)
             .await
     });
 

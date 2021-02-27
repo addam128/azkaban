@@ -2,6 +2,8 @@
 use ring::aead::{self, Aad, NONCE_LEN, Nonce, MAX_TAG_LEN as TAG_LEN};
 use ring::rand::{SystemRandom, SecureRandom};
 
+use indicatif::ProgressBar;
+
 use std::sync::Arc;
 
 use crate::memguard;
@@ -53,15 +55,18 @@ pub(crate) async fn save_keys(
     data_key: Arc<[u8; KEY_LEN]>,
     data_nonce: Arc<[u8; NONCE_LEN]>,
     master_key: Arc<aead::LessSafeKey>,
-    uniq_db: Arc<dbmanagers::UniqenessDBManager>)
+    uniq_db: Arc<dbmanagers::UniqenessDBManager>,
+    pb: Arc<ProgressBar>)
     -> Result<KeyAndNonce, utils::Error> {
 
     let nonce_for_key = Vec::<u8>::from(
         utils::get_unique_nonce(user, uniq_db.as_ref()).await?
     );
+    pb.inc(1);
     let nonce_for_nonce = Vec::<u8>::from(
         utils::get_unique_nonce(user, uniq_db.as_ref()).await?
     );
+    pb.inc(1);
 
     let mut data_key_vec = Vec::<u8>::new();
     data_key_vec.reserve(KEY_N_TAG_LEN);
@@ -72,6 +77,7 @@ pub(crate) async fn save_keys(
         Aad::from("dek"),
         data_key_vec.as_mut())?;
     data_key_vec.extend(tag.as_ref());
+    pb.inc(1);
 
     let mut data_nonce_vec = Vec::<u8>::new();
     data_nonce_vec.reserve(NONCE_N_TAG_LEN);
@@ -82,6 +88,7 @@ pub(crate) async fn save_keys(
         Aad::from("den"),
         data_nonce_vec.as_mut())?;
     data_nonce_vec.extend(tag.as_ref());
+    pb.inc(1);
 
     let mut kn = KeyAndNonce::new();
     
@@ -90,12 +97,15 @@ pub(crate) async fn save_keys(
     kn.set_nonce_for_key(nonce_for_key);
     kn.set_nonce_for_nonce(nonce_for_nonce);
 
+    pb.inc(1);
+
     Ok(kn)
 }
 
 pub(crate) fn load_keys(
     master_key: Arc<aead::LessSafeKey>,
-    kn: KeyAndNonce)
+    kn: KeyAndNonce,
+    pb: Arc<ProgressBar>)
     -> Result<(Arc<[u8; KEY_LEN]>, Arc<[u8; aead::NONCE_LEN]>),
     utils::Error> {
 
@@ -106,8 +116,10 @@ pub(crate) fn load_keys(
     memguard::mlock(&mut nonce_bytes)?;
     
     key_bytes.clone_from_slice(kn.get_data_key());
+    pb.inc(1);
     nonce_bytes.clone_from_slice(kn.get_data_nonce());
-
+    pb.inc(1);
+    
     let mut key = Arc::new([0u8; KEY_LEN]);
 
     match Arc::get_mut(&mut key) {
@@ -130,6 +142,7 @@ pub(crate) fn load_keys(
                 Some(bytes) => { bytes },
                 None => { return Err(utils::Error::SyncError);}
     })?;
+    pb.inc(1);
 
     let mut nonce = Arc::new([0u8; NONCE_LEN]);
     match Arc::get_mut(&mut nonce) {
@@ -152,6 +165,8 @@ pub(crate) fn load_keys(
             Some(bytes) => { bytes },
             None => { return Err(utils::Error::SyncError);}
         })?;
+    pb.inc(1);
+    pb.finish();
 
     Ok((key, nonce))
 }

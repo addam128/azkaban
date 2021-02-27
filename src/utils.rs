@@ -92,7 +92,7 @@ pub(crate) async fn get_unique_filename(
         /* https://stackoverflow.com/a/54277357 */
         let filename: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(7)
+        .take(FILENAME_LEN)
         .map(char::from)
         .collect();
 

@@ -1,5 +1,7 @@
 use ring::aead::{self, AES_256_GCM, Aad, BoundKey, UnboundKey};
 
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
 use crate::memguard;
 use crate::utils;
 use crate::nonceimpl::NonceSeqImpl;
@@ -22,9 +24,9 @@ pub(crate) async fn encrypt_file(
         mut infile: File,
         mut outstream: File,
         data_key: Arc<[u8; KEY_LEN]>, 
-        nonce: Arc<[u8; aead::NONCE_LEN]>)
+        nonce: Arc<[u8; aead::NONCE_LEN]>,
+        pb: ProgressBar)
         -> Result<File, utils::Error> {
-
     
     let nonces = NonceSeqImpl::new(nonce.as_ref())?;
     let u_key = UnboundKey::new(&AES_256_GCM, data_key.as_ref())?;
@@ -33,6 +35,7 @@ pub(crate) async fn encrypt_file(
     let mut buffer = [0u8; CHUNK_LEN as usize]; // no need to mlock, file exists in plain
     let file_len = infile.metadata().await?.len();
     let mut counter: usize = 0;
+    pb.set_length(file_len);
 
     let remainder = loop {
 
@@ -51,16 +54,18 @@ pub(crate) async fn encrypt_file(
         outstream.write_all(tag.as_ref()).await?;
 
         counter += 1;
+        pb.inc(CHUNK_LEN);
     };
 
     infile.read_exact(&mut buffer[..remainder as usize]).await?;
-    const KEY_LEN: usize = 256 / 8;
     let tag = s_key.seal_in_place_separate_tag(
         Aad::from(counter.to_be_bytes()),
         &mut buffer[..remainder as usize])?;
     
     outstream.write_all(&buffer[..remainder as usize]).await?;
     outstream.write_all(tag.as_ref()).await?;
+    pb.inc(remainder);
+    pb.finish();
 
     Ok(infile)
 }
@@ -70,7 +75,8 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin + Send + Sync + 'stati
     mut infile: File,
     mut outstream: W,
     data_key: Arc<[u8; KEY_LEN]>, 
-    nonce: Arc<[u8; aead::NONCE_LEN]>)
+    nonce: Arc<[u8; aead::NONCE_LEN]>,
+    pb: ProgressBar)
     -> Result<W, utils::Error> {
 
 
@@ -81,6 +87,8 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin + Send + Sync + 'stati
     let mut buffer = [0u8; CHUNK_N_TAG_LEN as usize];
     let file_len = infile.metadata().await?.len();
     let mut counter: usize = 0;
+
+    pb.set_length(file_len);
     
     memguard::mlock(&mut buffer)?; // should not be swapped as sometimes has plaintext in it
     
@@ -100,6 +108,7 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin + Send + Sync + 'stati
         outstream.write_all(&res).await?;
 
         counter += 1;
+        pb.inc(CHUNK_N_TAG_LEN);
     };
 
     infile.read_exact(&mut buffer[..remainder as usize]).await?;
@@ -111,6 +120,8 @@ pub(crate) async fn decrypt_file<W: AsyncWriteExt + Unpin + Send + Sync + 'stati
     outstream.write_all(&res).await?;
 
     memguard::shred(&mut buffer);
+    pb.inc(remainder);
+    pb.finish();
 
     Ok(outstream)
 }
