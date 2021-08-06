@@ -12,3 +12,4 @@ More functionality about to be added as I find time to work e.g:
 * maybe shredding files, however this might not be possible due to the wide usage of ssd-s.
 * testing, more options
 * gui??
+* CI, code quality improvements ...
