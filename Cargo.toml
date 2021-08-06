@@ -9,8 +9,8 @@ edition = "2018"
 [dependencies]
 ring = "0.16.20"
 console = "0.14.0"
-dialoguer = "0.7.1"
-indicatif =  "0.15.0"
+dialoguer = "0.8.0"
+indicatif =  "0.16.2"
 blake3 = "0.3.7"
 sqlx = { version = "0.5.1", features = ["runtime-tokio-rustls", "sqlite"] }
 protobuf = "2.22.0"
